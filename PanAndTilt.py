@@ -65,10 +65,6 @@ dt = 0.1
 
 #INITIALIZE SERVO MOTOR-----------------------------------------------------------------------
 # Initialize Constructor and servo 
-servo = pi_servo_hat.PiServoHat()
-
-# Restart hat 
-servo.restart()
 
 #Max range 
 max_angle = 90
@@ -78,18 +74,106 @@ min_angle = 0
 pwm_freq = 50
 
 # Initialize PWM frequency
-servo.set_pwm_frequency(pwm_freq)
+
 tol = 10
 
-#Callback functions 
-def somecall(msg):
-    global num_detections
-    num_detections = len(msg.detections)
 
-def somecallback(msg):
-    global x_at  
-    x_at = msg.x
+#Servo motor command
+class Motor_CMD():
+    def __init__(self,servo):
+        self.yaw_channel = yaw_channel
+        #PID values
+        self.kp = 1
+        self.ki = 0
+        self.kd = 0
+        
+        #Desired x position 
+        self.x_desired = cam_x_desired
+        self.tol = tol
+        #Error rates for motor class
+        self.er = er
+        self.ei = ei
+        self.ed = ed
+        #Height and width of camera parameters
+        self.W = W
+        self.H = H
+        
+        #Motor and frequency
+        self.servo = servo
+        self.servo.set_pwm_frequency = servo.set_pwm_frequency
+        self.min_angle = min_angle
+        self.max_angle = max_angle
+        self.target_found = False
+        #Wait for detection info topic to become avialble
+        #rospy.wait_for_message("/tag_detections", AprilTagDetectionArray)
+        self.rate = rospy.Rate(5)
+        #Subscribe to Apriltag detections and ATcoordinates
+        self.sub1 =  rospy.Subscriber("/tag_detections", AprilTagDetectionArray, self.check_AT)
+        self.sub2 = rospy.Subscriber("/AT_coords", AprilTagCoords, self.somecallback) 
+    #Check detections might code this better and store the value of the detections into AT_coords 
+    def check_AT(self,msg):
+        self.num_detections = len(msg.detections)
+        self.search_AT
+        if self.num_detections < 1:
+            print("No AprilTag")
+            #self.search_AT(servo=self.servo, min_angle=self.min_angle, max_angle=self.max_angle)
+            pass 
+        else:
+            self.curr_yaw = self.servo.get_servo_position(self.min_angle,self.max_angle)
+            self.Track(servo = self.servo, curr_yaw = self.curr_yaw)
+            print(self.curr_yaw)
 
+    def somecallback(self,msg):
+        self.xcurr = msg.x
+     
+    def search_AT(self, servo, min_angle, max_angle):
+        for i in range(min_angle,max_angle):
+            servo.move_servo_position(min_angle,i,max_angle)
+            time.sleep(0.1)
+        for i in range(max_angle,min_angle,-1):
+            servo.move_servo_position(min_angle,i,max_angle)
+            time.sleep(0.1)
+        
+    def Track(self,servo,curr_yaw):
+        self.PID_calc(er = self.er, ei=self.ei ,ed=self.ed ,kp=self.kp ,ki=self.ki,kd=self.kd, xdes=self.x_desired, xcurr=self.xcurr)
+        if self.er_curr >= self.tol:
+            #Move servo camera to the left or ccw
+            print("going counter")
+            curr_yaw = servo.move_servo_position(yaw_channel, curr_yaw + self.PID, max_angle) 
+        elif self.er_curr <= self.tol:
+            #Move servo camera to the right or cw 
+            #curr_yaw = -.001 * curr_yaw
+            curr_yaw = servo.move_servo_position(yaw_channel, curr_yaw - 1, max_angle) 
+            print( curr_yaw)
+        else: #er_curr<= tol:
+            #Stay still
+            print("We're good")
+            pass
+        
+    def PID_calc(self,er,ei,ed,kp,ki,kd,xdes,xcurr):
+        #Appending new values to old variables
+        er[0] = er[1]
+        eiold = ei
+    
+        #Error calculations
+        er[1] = xdes - xcurr
+        #print(er[1])
+        er_curr = er[1]
+        ei = eiold + ((er[1]+er[0])/2) * dt
+        ed = (er[1] - er[0])/dt
+    
+        #PID calculations
+        P = kp * er[1]
+        I = ki * ei
+        D = kd * ed 
+    
+        PID = (P+I+D)/100
+        self.PID = PID
+        self.er_curr = er_curr
+        print(self.PID, self.er_curr) 
+#def ret_PID():
+#    return PID(self.PID,self.er_curr)
+    
 #Look for the AT between the maximum and minimum angle parameters
 def AT_Look(test,max_angle,min_angle):
     for i in range(min_angle, max_angle):
@@ -118,65 +202,22 @@ def ROM(test):
     time.sleep(1)
 
     # Moves servo position to 180 degrees (2ms), Channel 0
-    test.move_servo_position(0,max_angle, max_angle)
+    #test.move_servo_position(0,max_angle, max_angle)
 
-def PID(er,ei,ed,kp,ki,kd,xdes,xcurr):
-    #Appending new values to old variables
-    er[0] = er[1]
-    eiold = ei
-
-    #Error calculations
-    er[1] = xdes - xcurr
-    print(er[1])
-    er_curr = er[1]
-    ei = eiold + ((er[1]+er[0])/2) * dt
-    ed = (er[1] - er[0])/dt
-
-    #PID calculations
-    P = kp * er[1]
-    I = ki * ei
-    D = kd * ed 
-
-    PID = (sum(P,I,D))/100
-    return(PID,er_curr)
-
-#Keep looking for AT 
-def Track():
-    global x_at, num_detections
-        #If we find the apriltag center... we will implement the PID to keep track of it
-    num_detections 
-    if num_detections > 0:
-    #Start calculating them errors
-        #Current heading position of camera between the min and max angles
-        curr_yaw = servo.get_servo_position(min_angle,max_angle)
-        PID(er,ei,ed,kp,ki,kd,cam_x_des,x_at)
-        print(PID)
-        if er_curr > 0:
-            #Move servo camera to the left or ccw
-            curr_yaw = servo.move_servo_position(yaw_channel, curr_yaw + PID, max_angle) 
-        else: #er_curr < 0: 
-            #Move servo camera to the right or cw 
-            curr_yaw = servo.move_servo_position(yaw_channel, curr_yaw - PID, max_angle) 
-        #else er_curr<= tol:
-            #Stay still
-           # pass
-    else:
-        AT_Look(servo,max_angle,min_angle)
-
+def main(): 
+    #Servo parameters
+    rospy.init_node('PanAndTilt', anonymous =True)
+    servo = pi_servo_hat.PiServoHat()
+    # Restart hat 
+    servo.restart()
+    servo.set_pwm_frequency(pwm_freq)
+    ROM(servo)
+    Tracking = Motor_CMD(servo)
     rospy.spin()
-
+    
 #Initializing script
 if __name__ == "__main__":
-    rospy.init_node('PanAndTilt', anonymous =True)
-    ROM(servo)
-    #Subscribe to the center of apriltags
-    #Subscribe to apriltag detections 
-    sub1 = rospy.Subscriber("/tag_detections",AprilTagDetectionArray, somecall)
-    sub2 = rospy.Subscriber("/AT_coords", AprilTagCoords, somecallback)
-    print(num_detections)
-    Track()
-
-
-
-
-
+    try:
+        main()
+    except rospy.ROSInterruptException:
+        pass
